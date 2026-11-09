@@ -116,6 +116,17 @@ h3{font:700 1.3rem/1.1 var(--display);font-variation-settings:"opsz" 96;letter-s
 .task.done .title,.task.done .note{text-decoration:line-through;color:var(--soft)}
 .task.done .chip{opacity:.6}
 .task .move{grid-column:2;margin:-2px 0 2px}
+.note{white-space:pre-line}
+.cap{grid-column:2;margin:4px 0 4px;min-width:0}
+.cap summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:800;font-size:15px;text-decoration:underline;text-underline-offset:3px}
+.cap summary .blanks{font-weight:500;text-decoration:none;background:var(--highlight);padding:0 2px}
+.cap-in{background:var(--white);border-radius:12px;padding:14px;margin-top:2px;display:grid;gap:12px}
+.cap-in .info{font-size:14px;line-height:1.35;color:var(--soft);margin:0}
+.cap-in .text{margin:0;font-size:16px;line-height:1.45;white-space:pre-line;overflow-wrap:anywhere}
+.cap-in .slides{margin:0;padding-left:1.3rem;font-size:15px;line-height:1.4}
+.cap-in h4{margin:0 0 4px;font:700 15px/1.2 var(--body)}
+.cap-in mark{background:var(--lime);color:var(--ink);padding:0 2px}
+.cap-in .acts{margin-top:2px}
 
 .panel{background:var(--card);border-radius:18px;padding:18px 20px;margin:0 0 20px}
 .panel h3{margin-bottom:8px}
@@ -236,6 +247,8 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     </div>
     <div class="field" id="fTimeWrap"><label for="fTime">Time</label><input type="time" id="fTime"><span class="note">You'll get a reminder at this time.</span></div>
     <div class="field"><label for="fNote">Notes</label><textarea id="fNote" maxlength="600"></textarea></div>
+    <div class="field" data-postonly><label for="fCaption">Caption</label><textarea id="fCaption" maxlength="2200" style="min-height:150px"></textarea></div>
+    <div class="field" data-postonly><label for="fSlides">Slides (one per line, if it's a carousel)</label><textarea id="fSlides" maxlength="1200"></textarea></div>
     <div class="acts">
       <button type="submit" class="btn">Save</button>
       <button type="button" class="link" data-close>Cancel</button>
@@ -281,7 +294,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
   var app = $("app");
   var db = null, tasks = {}, days = {}, weeks = {}, loaded = {t:false,d:false,w:false};
   var view = "day", sel = todayKey(), monthAt = sel.slice(0,7), filter = "all", editing = null, delArmed = false, planScrolled = false;
-  var pushState = "unknown", swReg = null;
+  var pushState = "unknown", swReg = null, openCaps = {};
   try { filter = localStorage.getItem("hr-cal-filter") || "all"; if (filter!=="all" && TYPES.indexOf(filter)<0) filter="all"; } catch(e){}
 
   function pad(n){ return String(n).padStart(2,"0"); }
@@ -316,7 +329,26 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
         (t.note?'<span class="note">'+esc(t.note)+'</span>':"")+
       '</button>'+
       (opts.move?'<button type="button" class="link small move" data-move="'+t.id+'">Move to today</button>':"")+
+      capBlock(t)+
     '</li>';
+  }
+  function blanks(text){ return ((text||"").match(/\[[^\]]+\]/g)||[]).length; }
+  function capText(text){ return esc(text).replace(/\[[^\]]+\]/g,function(m){ return "<mark>"+m+"</mark>"; }); }
+  function capBlock(t){
+    if(!t.caption&&!t.slides) return "";
+    var n=blanks(t.caption), info=[t.format,t.pillar,t.goal?"Goal: "+t.goal:""].filter(Boolean).join(" · ");
+    var slides=(t.slides||"").split("\n").filter(Boolean);
+    return '<details class="cap" data-cap="'+t.id+'"'+(openCaps[t.id]?" open":"")+'><summary>'+(t.caption?"Caption":"Slides")+(slides.length&&t.caption?" and slides":"")+(n?'<span class="blanks">'+plural(n,"blank")+' to fill</span>':'')+'</summary><div class="cap-in">'+
+      (info?'<p class="info">'+esc(info)+'</p>':'')+
+      (slides.length?'<div><h4>Slides</h4><ol class="slides">'+slides.map(function(l){ return "<li>"+esc(l)+"</li>"; }).join("")+'</ol></div>':'')+
+      (t.caption?'<div>'+(slides.length?'<h4>Caption</h4>':'')+'<p class="text">'+capText(t.caption)+'</p></div><div class="acts"><button type="button" class="btn" data-copy="'+t.id+'">Copy caption</button></div>':'')+
+    '</div></details>';
+  }
+  function copyCaption(id){
+    var t=tasks[id]; if(!t) return;
+    var n=blanks(t.caption), ok=function(){ toast(n?"Copied. It still has "+plural(n,"blank")+" to fill before you post.":"Caption copied."); };
+    var fallback=function(){ var a=document.createElement("textarea"); a.value=t.caption; a.setAttribute("readonly",""); a.style.position="fixed"; a.style.opacity="0"; document.body.appendChild(a); a.select(); var good=false; try{ good=document.execCommand("copy"); }catch(e){} a.remove(); if(good) ok(); else toast("Couldn't copy. Press and hold the caption to select it."); };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t.caption).then(ok,fallback); else fallback();
   }
   function remindBlock(){
     var s=pushState;
@@ -349,7 +381,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     if (isToday && open.length){
       var n=open[0];
       h+='<section class="next on-blue" aria-label="Next up"><p class="when">Next up · '+esc(whenText(n))+'</p><h2>'+esc(n.title)+'</h2>'+(n.note?'<p class="note">'+esc(n.note)+'</p>':'')+
-        '<div class="acts"><button type="button" class="btn" data-finish="'+n.id+'">Mark done</button></div></section>';
+        '<div class="acts"><button type="button" class="btn" data-finish="'+n.id+'">Mark done</button>'+(n.caption?'<button type="button" class="link" style="color:#fff" data-copy="'+n.id+'">Copy caption</button>':'')+'</div></section>';
     }
     if (isToday){
       var late=sorted(Object.values(tasks).filter(function(t){ return !t.done && t.date<today; }));
@@ -444,7 +476,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     var t=tasks[id]; if(!t) return;
     db.doc("hr_tasks/"+id).update({done:val,at:new Date().toISOString()}).catch(failed);
   }
-  function clean(t){ return {date:t.date,time:t.time||"",part:t.part||"",type:t.type,title:t.title,note:t.note||"",done:!!t.done,order:t.order||0,at:new Date().toISOString()}; }
+  function clean(t){ return {date:t.date,time:t.time||"",part:t.part||"",type:t.type,title:t.title,note:t.note||"",done:!!t.done,order:t.order||0,caption:t.caption||"",slides:t.slides||"",goal:t.goal||"",format:t.format||"",pillar:t.pillar||"",at:new Date().toISOString()}; }
 
   /* ---------- task sheet ---------- */
   var fTypes=$("fTypes");
@@ -453,6 +485,8 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     var list=PARTS.slice(); if(extra&&list.indexOf(extra)<0) list.push(extra);
     $("fPart").innerHTML='<option value="@time">At a set time</option>'+list.map(function(p){ return '<option value="'+esc(p)+'">'+esc(p)+'</option>'; }).join("");
   }
+  function syncPost(){ var post=(fTypes.querySelector("input:checked")||{}).value==="post"; document.querySelectorAll("[data-postonly]").forEach(function(el){ el.hidden=!post; }); }
+  fTypes.addEventListener("change",syncPost);
   function syncTime(){ $("fTimeWrap").hidden=$("fPart").value!=="@time"; }
   $("fPart").addEventListener("change",function(){ syncTime(); if(!$("fTimeWrap").hidden&&!$("fTime").value) $("fTime").value="19:00"; });
   function openTask(t){
@@ -465,6 +499,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     $("fTime").value=t?(t.time||""):"";
     syncTime();
     var ty=t?t.type:"post"; fTypes.querySelectorAll("input").forEach(function(i){ i.checked=i.value===ty; });
+    $("fCaption").value=t?(t.caption||""):""; $("fSlides").value=t?(t.slides||""):""; syncPost();
     $("fErr").hidden=true;
     var d=$("fDel"); d.hidden=!t; d.textContent="Delete";
     $("taskDlg").showModal();
@@ -479,7 +514,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     if(part==="@time"&&!time){ toast("Pick a time, or choose Any time."); $("fTime").focus(); return; }
     var type=(fTypes.querySelector("input:checked")||{}).value||"post";
     var prev=editing?tasks[editing]:null;
-    var doc=clean({date:date,time:time,part:part==="@time"?"":part,type:type,title:title,note:$("fNote").value.trim(),done:prev?prev.done:false,order:prev?prev.order:Date.now()%100000});
+    var doc=clean({date:date,time:time,part:part==="@time"?"":part,type:type,title:title,note:$("fNote").value.trim(),done:prev?prev.done:false,order:prev?prev.order:Date.now()%100000,caption:type==="post"?$("fCaption").value.trim():(prev?prev.caption:""),slides:type==="post"?$("fSlides").value.trim():(prev?prev.slides:""),goal:prev?prev.goal:"",format:prev?prev.format:"",pillar:prev?prev.pillar:""});
     db.doc("hr_tasks/"+(editing||newId())).set(doc).catch(failed);
     $("taskDlg").close();
     if(date!==sel&&view==="day"){ sel=date; monthAt=date.slice(0,7); render(); }
@@ -511,6 +546,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
 
   /* ---------- clicks ---------- */
   document.querySelector(".tabs").addEventListener("click",function(e){ var b=e.target.closest("[data-view]"); if(b) setView(b.dataset.view); });
+  app.addEventListener("toggle",function(e){ var c=e.target.dataset&&e.target.dataset.cap; if(c) openCaps[c]=e.target.open; },true);
   app.addEventListener("change",function(e){ var id=e.target.dataset&&e.target.dataset.done; if(id) setDone(id,e.target.checked); });
   app.addEventListener("click",function(e){
     var b=e.target.closest("button"); if(!b) return; var d=b.dataset;
@@ -518,6 +554,7 @@ textarea{min-height:84px;resize:vertical;line-height:1.4}
     else if(d.open) go(d.open);
     else if(d.edit&&tasks[d.edit]) openTask(tasks[d.edit]);
     else if(d.finish) setDone(d.finish,true);
+    else if(d.copy) copyCaption(d.copy);
     else if(d.move){ db.doc("hr_tasks/"+d.move).update({date:todayKey(),at:new Date().toISOString()}).catch(failed); }
     else if(d.editday!=null) openDay();
     else if(d.filter){ filter=d.filter; try{ localStorage.setItem("hr-cal-filter",filter); }catch(x){} render(); }
